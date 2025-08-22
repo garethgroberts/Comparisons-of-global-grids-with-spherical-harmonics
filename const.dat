@@ -1,0 +1,4 @@
+Output name	Density	Visc	Max degree (DT calc)	Min depth (for DT calc. km)	Kappa (1=compressible, else incompressible)	rho_w	visc_0	l_min	bgrho	grav10	bdry (surface: 1 = free, 0 = no-slip)	bdry_bot (CMB: 1 = free, 0 = no-slip)							
+output_test147	./INPUT/DENSITY_INPUTS/m_cc_066_u_density_sph.037	./INPUT/VIS_PROF/visc11_vprof.dat	50	0	1	1.03E+03	4.00E+21	1	4.50E+03	1	1	1
+
+

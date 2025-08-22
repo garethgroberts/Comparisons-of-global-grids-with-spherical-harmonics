@@ -1,0 +1,548 @@
+#!/bin/bash
+
+#conda deactivate
+
+##### SEE run_example.sh #####
+
+gmt gmtset PS_MEDIA = a0
+gmt gmtset MAP_FRAME_TYPE = plain
+gmt gmtset PS_LINE_JOIN = round
+
+gmt makecpt -Cpolar -T-12000/12000/2000 -D > dt.cpt
+gmt makecpt -Cpolar -T-1200/1200/200 -D > dtref.cpt
+gmt makecpt -Cpolar -T-200/200/20 -D > geoid.cpt
+
+# input directory
+
+#./get_run_code_from_mc2_name.sh 
+#rlist=`awk '{print $1}' < list_for_plotting | tr '\n' '\t'`
+#echo $rlist
+
+#for runcode in $rlist ; do
+for runcode in 147 ; do
+
+gmt gmtset FONT_ANNOT_PRIMARY             = 20p,Helvetica,black
+gmt gmtset FONT_ANNOT_SECONDARY           = 18p,Helvetica,black
+gmt gmtset FONT_LABEL                     = 20p,Helvetica,black
+gmt gmtset FONT_HEADING                   = 18p,Helvetica,black
+
+mc2name=`awk -v var=$runcode '{if ($1=="output_test"var) print $2}' < inputs_ggr_all_mc2_runs.dat | sed 's^./INPUT/DENSITY_INPUTS/^^g' | sed -n  's/_density.*//p'`
+
+echo "plotting" $runcode $mc2name
+
+outdirfull=./output_test${runcode}_LMAX50_RHOW1.03E+03_MIND0   #include all depths
+
+
+# reference grids and spherical harmonic files
+refdtgrd=$outdirfull/GRD_REF_dyntopography
+refdtsph=$outdirfull/SPH_REF_dyntopography
+
+refgeogrd=$outdirfull/GRD_REF_geoid
+refgeosph=$outdirfull/SPH_REF_geoid
+
+
+# calculated grids and spherical harmonic files
+# surftopo=$outdirfull/GRD_surftopo
+# surftoposph=$outdirfull/SPH_surftopo
+# 
+# geoidgrd=$outdirfull/GRD_geoid
+# geoidsph=$outdirfull/SPH_geoid
+
+# for like_for_like_comparison of ref grids...
+surftopo=$refdtgrd
+surftoposph=$refdtsph
+
+geoidgrd=$refgeogrd
+geoidsph=$refgeosph
+
+
+
+kno=`ls $outdirfull/KERNELS/surftopo* | wc -l | awk '{$1=$1};1'`
+echo "LMAX = " $kno
+
+psfile=./mc2_${mc2name}_REFvREF_full_topo_geoid.ps
+
+#############################################################################################
+# plot reference dynamic topography (Hoggard et al., 2017) and calculated surface topography
+#############################################################################################
+
+
+# plot grid of calculated surface topography 
+
+rgn="-Rd"
+proj="-JW15c"
+
+gmt psbasemap $rgn $proj -X6c -Y40c -Ba0 -K -P > $psfile
+
+echo "grdimage surftopo result..."
+gmt grdimage  $surftopo $rgn $proj -Cdt.cpt -O -K >> $psfile
+gmt pscoast $rgn $proj -W0.4p,black -Dh -A1000/0/1 -O -K >> $psfile
+gmt psscale $rgn $proj -Ba8000f4000+l"MCM Surface Topography, m" -Cdt.cpt -Dn-0.05/0.5+jMC+e+w6c/0.4c+m -O -K >> $psfile
+echo "a" | gmt pstext $rgn $proj -F+f24p+jTL+cTL -D12p/-12p -Gwhite -O -K >> $psfile
+gmt psbasemap $rgn $proj -Ba0 -O -K >> $psfile
+
+
+# plot grid of reference dynamic topography 
+echo "grdimage reference dynamic topography result..."
+gmt grdimage $refdtgrd $rgn $proj -Cdtref.cpt -O -K -Y-8c >> $psfile
+gmt pscoast $rgn $proj -W0.4p,black -Dh -A1000/0/1 -O -K >> $psfile
+gmt psscale $rgn $proj -Ba800f400+l"Observed Dynamic Topography, m" -Cdtref.cpt -Dn-0.05/0.5+jMC+e+w6c/0.4c+m -O -K >> $psfile
+echo "b" | gmt pstext $rgn $proj -F+f24p+jTL+cTL -D12p/-12p -Gwhite -O -K >> $psfile
+gmt psbasemap $rgn $proj -Ba0 -O -K >> $psfile
+
+
+# calculate chi (rms) misfit between reference and calculated grids
+	f1=$surftopo
+	f2=$refdtgrd
+	awk '{print cos($2*2*3.14159/360)*(0.5*3.14159)}' $f1 > factors.dat
+	awk '{print $3}' $f1 > temp1.dat
+	awk '{print $3}' $f2 > temp2.dat
+	paste temp1.dat temp2.dat | awk '{print (($1-$2)**2)**0.5}' > temp3.dat
+	paste temp3.dat factors.dat | awk '{print $1*$2}' > temp4.dat
+	len=`wc -l temp3.dat | awk '{print $1}'`
+	l2norm=`awk '{sum+=$1;} END{print sum;}' temp3.dat | awk -v len=$len '{print $1/len}'`
+	l2norm_factored=`awk '{sum+=$1;} END{print sum;}' temp4.dat | awk -v len=$len '{print $1/len}'`
+	l2norm_factored=`echo $l2norm_factored | awk '{printf "%.0f\n", $1}'`
+
+	echo "=================================================="
+	echo "topo: l2norm l2norm_factored"
+	echo $l2norm $l2norm_factored
+
+#	echo "@[\chi@[ = $l2norm_factored m" | gmt pstext $rgn $proj -F+f14p+cBL+jTC -D32p/2p -N -O -K >> $psfile
+
+
+# plot power spectra of calculated surface topography, reference DT and Kaula's rule
+
+# reference power spectrum...
+ghead -n-1 $refdtsph | awk '{if (NR>4) print $2, $3, $4, $5}'  > l_m_c1_c2.temp  #GGR adjustment for mac (delete final row command revised)
+lmax=`gmt gmtinfo -C l_m_c1_c2.temp | awk '{print $2}'`
+	awk '{print $1, $2, $3}' l_m_c1_c2.temp > junk1
+	awk '{if ($2>0) print $1, -$2, $4}' l_m_c1_c2.temp > junk2
+	cat junk2 >> junk1
+	sort -n -k1 -k2 junk1 > junk3
+	echo "0 0 0" > junk4 ### ONLY FOR PROPMAT: NO DEGREE 0 STRUCTURE POSSIBLE
+	cat junk3 >> junk4
+	cp junk4 l_m_coeffs.temp
+	rm junk*
+	echo -n "" > l_power_ref_dt.temp
+	i=0
+	while [ $i -le $lmax ] ; do
+		awk -v i=$i '{if ($1==i) print $0}' l_m_coeffs.temp > lmc.temp
+		power=`awk '{print $3**2.}' lmc.temp | awk '{sum+=$1;} END{printf "%.8f\n", sum;}'`
+		echo $i $power >> l_power_ref_dt.temp
+		i=$[$i+1]
+	done
+
+# calculated power spectrum...
+gmt gmtset FONT_ANNOT_PRIMARY             = 12p,Helvetica,black
+gmt gmtset FONT_ANNOT_SECONDARY           = 12p,Helvetica,black
+gmt gmtset FONT_LABEL                     = 12p,Helvetica,black
+gmt gmtset FONT_HEADING                   = 12p,Helvetica,black
+
+ghead -n-1 $surftoposph | awk '{if (NR>4) print $2, $3, $4, $5}'  > l_m_c1_c2.temp  #GGR adjustment for mac (delete final row)
+lmax=`gmt gmtinfo -C l_m_c1_c2.temp | awk '{print $2}'`
+
+	awk '{print $1, $2, $3}' l_m_c1_c2.temp > junk1
+	awk '{if ($2>0) print $1, -$2, $4}' l_m_c1_c2.temp > junk2
+	cat junk2 >> junk1
+	sort -n -k1 -k2 junk1 > junk3
+	echo "0 0 0" > junk4 ### ONLY FOR PROPMAT: NO DEGREE 0 STRUCTURE POSSIBLE
+	cat junk3 >> junk4
+	cp junk4 l_m_coeffs.temp
+	rm junk*
+	echo -n "" > l_power.temp
+	i=0
+	while [ $i -le $lmax ] ; do
+		awk -v i=$i '{if ($1==i) print $0}' l_m_coeffs.temp > lmc.temp
+		power=`awk '{print $3**2.}' lmc.temp | awk '{sum+=$1;} END{printf "%.8f\n", sum;}'`
+		echo $i $power >> l_power.temp
+		i=$[$i+1]
+	done
+
+	
+# calculate correlation coefficients, r_l, between reference dynamic topo and calculated surface topo
+	echo "0 0 0 0" > t1.temp
+	echo "0 0 0 0" > t2.temp
+		
+	ghead -n-1 $refdtsph | awk '{if (NR>4) print $2, $3, $4, $5}' >> t1.temp # ref
+	ghead -n-1 $surftoposph | awk '{if (NR>4) print $2, $3, $4, $5}' >> t2.temp # pred
+
+	python3.11 forte_calc_corr_ggr.py
+
+	gmt math corr1.temp MEAN = m.temp
+	gmt math corr1.temp STD = s.temp
+	cmean=`gmt gmtinfo -C m.temp | awk '{print $2}'` # conor mean r_l
+	cstd=`gmt gmtinfo -C s.temp | awk '{print $2}'` # conor std r_l
+
+	echo "topo r: cmean cstd"
+	echo $cmean $cstd
+
+	rltot=`awk '{print $0}' < rltot.temp`
+	echo "r_l:", $rltot
+	
+	cmean=`echo $cmean | awk '{printf "%.2f\n", $1}'`
+	rltot=`echo $rltot | awk '{printf "%.2f\n", $1}'`
+
+
+# plot topo and DT power spectra
+ 	rgnp="-R0/$lmax/1e-2/1e2" 
+	projp="-JX5c/7cl"
+	bs="nS"
+	gmt psbasemap $rgnp $projp -Ba1f1p+l"Topography Power (km@+2@+)" -BWe -K -O -Y-8c -X-1c >> $psfile
+	gmt psbasemap $rgnp $projp -Ba20f5+l"Degree, @%6%l@%%" -B${bs} -O -K >> $psfile
+	echo "c" | gmt pstext $rgnp $projp -F+f24p+jTR+cTR -D-6p/-6p -Gwhite -O -K >> $psfile
+
+#	plot_kaula
+	G="6.67e-11" # m3 kg-1 s-2
+	M="5.97e24" # kg
+	R="6371000" # m
+
+	for Z in 9 12 15 20 30 40 50 ; do
+
+		Z_adj=`echo $Z | awk '{print $1*1e-8}'` # SI
+#		Z_adj=$Z
+		k1=`echo $G $M | awk '{print ($1*$2)}'`
+		k2=`echo $Z_adj $R | awk '{print ($1*($2**2.))}'`
+		k3=`echo $k1 $k2 | awk '{print ($1/$2)**2.}'`
+		echo -n "" > kl_Z${Z}.temp
+		for i in $(seq 2 1 50) ; do
+			kl1=`echo $i | awk '{print 2/$1}'`
+			kl2=`echo $i | awk '{print 3/($1**2.)}'`
+			kl3=`echo $i | awk '{print 1/($1**4.)}'`
+			klfull=`echo $kl1 $kl2 $kl3 | awk '{print $1 - $2 + $3}'`
+			echo $i $k3 $klfull | awk '{print $1, ($2*$3)/1e10}' >> kl_Z${Z}.temp # m2
+		done
+	done
+	cat kl_Z9.temp | awk '{print $1, $2/1e6}' > t1.temp
+	tac kl_Z15.temp | awk '{print $1, $2/1e6}' >> t1.temp
+ 	gmt psxy t1.temp $rgnp $projp -L -G230/230/230 -O -K >> $psfile
+	cat kl_Z12.temp | awk '{print $1, $2/1e6}' | gmt psxy $rgnp $projp -W0.5p,190/190/190 -O -K >> $psfile # km2
+
+
+# 	plot_megan
+loaded=water
+		if [ $loaded == "water" ] ; then
+			#### SEE ipython notebook in from_megan ####
+			infiletemp="./from_megan/outputfolder/DT_b_1.00.txt"
+		elif [ $loaded == "air" ] ; then
+			infiletemp="./from_megan/outputfolder_air/DT_b_1.00.txt"
+		fi
+
+		awk '{print $1, $3}' $infiletemp | gmt psxy $rgnp $projp -W1p,orange,- -O -K >> $psfile
+	
+# plot reference DT spectrum
+	awk '{print $1, $2/1e6}' l_power_ref_dt.temp | gmt psxy $rgnp $projp -W1p,grey -O -K >> $psfile
+	
+# plot surface topo power spectrum
+	awk '{print $1, $2/1e6}' l_power.temp | gmt psxy $rgnp $projp -W1p,black -O -K >> $psfile
+	gmt psbasemap $rgnp $projp -Ba0 -O -K >> $psfile
+
+
+# calculate total pspec misfit (chi_p)
+	cp l_power.temp f1
+	cat kl_Z12.temp | awk -v lmax=$kno '{if ($1<=lmax) print $1, $2/1e6}' > f2
+
+	if [ $loaded == "water" ] ; then
+		#### SEE ipython notebook in from_megan ####
+		infiletemp="./from_megan/outputfolder/DT_b_1.00.txt"
+	elif [ $loaded == "air" ] ; then
+		infiletemp="./from_megan/outputfolder_air/DT_b_1.00.txt"
+	fi
+	awk -v lmax=$kno '{if ($1<=lmax) print $1, $3}' $infiletemp > f3
+
+	## Kaula misfit
+	awk '{if ($1>1) print $01, $2/1e6}' f1 > f1a
+	n=`wc -l f1a | awk '{print $1}'`
+	rmsk=`paste f1a f2 | awk '{print $2, $4}' | awk '{print ($1-$2)**2.}' | awk '{sum+=$1;}END{print sum;}' | awk -v n=$n '{print ($1/n)**0.5}'`
+	rmsklog=`paste f1a f2 | awk '{print log($2)/log(10), log($4)/log(10)}' | awk '{print ($1-$2)**2.}' | awk '{sum+=$1;}END{print sum;}' | awk -v n=$n '{print ($1/n)**0.5}'`
+
+	## Megan misfit 
+	awk '{if ($1>0) print $0}' f1 > f1b
+	n=`wc -l f1b | awk '{print $1}'`
+	rmsm=`paste f1b f3 | awk '{print $2, $4}' | awk '{print ($1-$2)**2.}' | awk '{sum+=$1;}END{print sum;}' | awk -v n=$n '{print ($1/n)**0.5}'`
+	rmsmlog=`paste f1b f3 | awk '{print log($2)/log(10), log($4)/log(10)}' | awk '{print ($1-$2)**2.}' | awk '{sum+=$1;}END{print sum;}' | awk -v n=$n '{print ($1/n)**0.5}'`
+	
+	rmstot=`echo $rmsk $rmsm | awk '{printf "%.1f\n", ($1+$2)}'`
+	rmstotlog=`echo $rmsklog $rmsmlog | awk '{printf "%.2f\n", ($1+$2)}'`
+
+	echo "topo: rms_kaula, rms_megan, rms_tot (log):"
+	echo $rmsklog $rmsmlog $rmstotlog
+	echo "=================================================="
+
+	echo "@[\chi_p@[ = $rmstotlog" | gmt pstext $rgnp $projp -F+f14p+cTC+jTC -D0p/-4p -N -O -K >> $psfile
+	
+
+# plot histogram...
+	t=1000
+	minv="-12000"
+	maxv="12000"
+	
+	# reference
+	gmt grd2xyz $refdtgrd > xyz.temp
+	python my_histo_global_sph_adj.py $minv $maxv $t
+	mv myhisto.temp myhisto_refdt.temp
+	
+	#calculated
+	gmt grd2xyz $surftopo > xyz.temp
+
+	rgnh="-R${minv}/${maxv}/0/10000"
+	projh="-JX5c/7c"
+	
+	gmt psbasemap $rgnh $projh -X6c -BwESn -Bx8000f4000+l"h, m"  -By5000+a90 -O -K >> $psfile
+
+	python my_histo_global_sph_adj.py $minv $maxv $t
+	barsize="5p"
+	gmt psxy myhisto.temp $rgnh $projh -Sb${barsize}+b0 -Gblack -O -K >> $psfile
+	
+	barsize="2.5p"
+	gmt psxy myhisto_refdt.temp $rgnh $projh -Sb${barsize}+b0 -Ggrey -O -K >> $psfile
+	
+	echo "d" | gmt pstext $rgnh $projh -F+f24p+jTL+cTL -D6p/-6p -Gwhite -O -K >> $psfile
+	echo "Count" | gmt pstext $rgnh $projh -F+f14p+jTR+cTR+a90 -D-15p/-6p -N -O -K >> $psfile
+	
+	rm -f tempbox
+	touch tempbox
+	echo -6000 9000 >> tempbox
+	echo 6000 9000 >> tempbox
+	echo 6000 10000 >> tempbox
+	echo -6000 10000 >> tempbox
+	echo -6000 9000 >> tempbox
+ 	gmt psxy tempbox $rgnh $projh -Gwhite -t20 -K -O >> $psfile
+
+	echo "@[\chi@[ = $l2norm_factored m" | gmt pstext $rgnh $projh -F+f14p+cTC -D0p/-4p -N -O -K -Ba0 >> $psfile
+
+# forte correlation coeff 
+	rgnc="-R0/$kno/-1.1/1.1"
+	projc="-JX5c/7c"
+
+	gmt psbasemap $rgnc $projc -X6c -Ba0.5f0.25+l"Correlation, @[r_l@[" -BE -O -K >> $psfile
+	gmt psbasemap $rgnc $projc -Ba20f5+l"Degree, @[l@[" -BSn -O -K >> $psfile
+
+	awk '{print (NR-1), $1}' corr1.temp | gmt psxy $rgnc $projc -W1p,black -O -K >> $psfile
+
+	gmt psbasemap $rgnc $projc -Ba0 -O -K >> $psfile
+	
+echo "e" | gmt pstext $rgnh $projh -F+f24p+jTR+cTR -D-6p/-6p -Gwhite -O -K >> $psfile
+echo "@[\overline{r_l}@[ = $cmean" | gmt pstext $rgnh $projh -F+f14p+cTC -D0p/-4p -N -O -K >> $psfile
+echo "@[{r}@[ = $rltot" | gmt pstext $rgnh $projh -F+f14p+cTC -D0p/-18p -N -O -K >> $psfile
+
+
+#######################################################################################################################################
+#############################################################  PLOT GEOID  ############################################################
+#######################################################################################################################################
+gmt gmtset FONT_ANNOT_PRIMARY             = 20p,Helvetica,black
+gmt gmtset FONT_ANNOT_SECONDARY           = 18p,Helvetica,black
+gmt gmtset FONT_LABEL                     = 20p,Helvetica,black
+gmt gmtset FONT_HEADING                   = 18p,Helvetica,black
+
+rgn="-Rd"
+proj="-JW15c"
+
+gmt psbasemap $rgn $proj -X9c -Y16c -Ba0 -K -P -O >> $psfile
+
+echo "grdimage geoid result..."
+gmt grdimage $geoidgrd $rgn $proj -Cgeoid.cpt -O -K >> $psfile
+gmt pscoast $rgn $proj -W0.4p,black -Dh -A1000/0/1 -O -K >> $psfile
+gmt psscale $rgn $proj -Ba200f50+l"Geoid, m" -Cgeoid.cpt -Dn-0.05/0.5+jMC+e+w6c/0.4c+m -O -K >> $psfile
+echo "f" | gmt pstext $rgn $proj -F+f24p+jTL+cTL -D12p/-12p -Gwhite -O -K >> $psfile
+gmt psbasemap $rgn $proj -Ba0 -O -K >> $psfile
+
+echo "grdimage reference geoid result..."
+gmt grdimage $refgeogrd $rgn $proj -Cgeoid.cpt -O -K -Y-8c >> $psfile
+gmt pscoast $rgn $proj -W0.4p,black -Dh -A1000/0/1 -O -K >> $psfile
+echo "g" | gmt pstext $rgn $proj -F+f24p+jTL+cTL -D12p/-12p -Gwhite -O -K >> $psfile
+gmt psbasemap $rgn $proj -Ba0 -O -K >> $psfile
+
+# calculate chi (rms) misfit between reference and calculated grids
+	f1=$geoidgrd
+	f2=$refgeogrd
+	awk '{print cos($2*2*3.14159/360)*(0.5*3.14159)}' $f1 > factors.dat
+	awk '{print $3}' $f1 > temp1.dat
+	awk '{print $3}' $f2 > temp2.dat
+	paste temp1.dat temp2.dat | awk '{print (($1-$2)**2)**0.5}' > temp3.dat
+	paste temp3.dat factors.dat | awk '{print $1*$2}' > temp4.dat
+	len=`wc -l temp3.dat | awk '{print $1}'`
+	l2norm=`awk '{sum+=$1;} END{print sum;}' temp3.dat | awk -v len=$len '{print $1/len}'`
+	l2norm_factored=`awk '{sum+=$1;} END{print sum;}' temp4.dat | awk -v len=$len '{print $1/len}'`
+	l2norm_factored=`echo $l2norm_factored | awk '{printf "%.0f\n", $1}'`
+
+	echo "=================================================="
+	echo "geoid: l2norm l2norm_factored"
+	echo $l2norm $l2norm_factored
+	
+#	echo "@[\chi@[ = $l2norm_factored m" | gmt pstext $rgn $proj -F+f14p+cBL+jTC -D32p/2p -N -O -K >> $psfile
+
+
+# plot power spectra of calculated geoid and reference geoid...
+
+# reference power spectrum...	
+ghead -n-1 $refgeosph | awk '{if (NR>4) print $2, $3, $4, $5}'  > l_m_c1_c2.temp  #GGR adjustment for mac (delete final row)
+lmax=`gmt gmtinfo -C l_m_c1_c2.temp | awk '{print $2}'`
+	awk '{print $1, $2, $3}' l_m_c1_c2.temp > junk1
+	awk '{if ($2>0) print $1, -$2, $4}' l_m_c1_c2.temp > junk2
+	cat junk2 >> junk1
+	sort -n -k1 -k2 junk1 > junk3
+	echo "0 0 0" > junk4 ### ONLY FOR PROPMAT: NO DEGREE 0 STRUCTURE POSSIBLE
+	cat junk3 >> junk4
+	cp junk4 l_m_coeffs.temp
+	rm junk*
+	echo -n "" > l_power_ref_geo.temp
+	i=0
+	while [ $i -le $lmax ] ; do
+		awk -v i=$i '{if ($1==i) print $0}' l_m_coeffs.temp > lmc.temp
+		power=`awk '{print $3**2.}' lmc.temp | awk '{sum+=$1;} END{printf "%.8f\n", sum;}'`
+		echo $i $power >> l_power_ref_geo.temp
+		i=$[$i+1]
+	done
+
+
+# calculated power spectrum...
+gmt gmtset FONT_ANNOT_PRIMARY             = 12p,Helvetica,black
+gmt gmtset FONT_ANNOT_SECONDARY           = 12p,Helvetica,black
+gmt gmtset FONT_LABEL                     = 12p,Helvetica,black
+gmt gmtset FONT_HEADING                   = 12p,Helvetica,black
+
+ghead -n-1 $geoidsph | awk '{if (NR>4) print $2, $3, $4, $5}'  > l_m_c1_c2.temp  #GGR adjustment for mac (delete final row)
+lmax=`gmt gmtinfo -C l_m_c1_c2.temp | awk '{print $2}'`
+	awk '{print $1, $2, $3}' l_m_c1_c2.temp > junk1
+	awk '{if ($2>0) print $1, -$2, $4}' l_m_c1_c2.temp > junk2
+	cat junk2 >> junk1
+	sort -n -k1 -k2 junk1 > junk3
+	echo "0 0 0" > junk4 ### ONLY FOR PROPMAT: NO DEGREE 0 STRUCTURE POSSIBLE
+	cat junk3 >> junk4
+	cp junk4 l_m_coeffs.temp
+	rm junk*
+	echo -n "" > l_power.temp
+	i=0
+	while [ $i -le $lmax ] ; do
+		awk -v i=$i '{if ($1==i) print $0}' l_m_coeffs.temp > lmc.temp
+		power=`awk '{print $3**2.}' lmc.temp | awk '{sum+=$1;} END{printf "%.8f\n", sum;}'`
+		echo $i $power >> l_power.temp
+		i=$[$i+1]
+	done
+	
+# calculate correlation coefficients, r_l, between reference and calculated geoid
+	echo "0 0 0 0" > t1.temp
+	echo "0 0 0 0" > t2.temp
+		
+	ghead -n-1 $refgeosph | awk '{if (NR>4) print $2, $3, $4, $5}' >> t1.temp # ref
+	ghead -n-1 $geoidsph | awk '{if (NR>4) print $2, $3, $4, $5}' >> t2.temp # pred
+
+	python3.11 forte_calc_corr_ggr.py
+
+	gmt math corr1.temp MEAN = m.temp
+	gmt math corr1.temp STD = s.temp
+	cmean=`gmt gmtinfo -C m.temp | awk '{print $2}'` # conor mean r_l
+	cstd=`gmt gmtinfo -C s.temp | awk '{print $2}'` # conor std r_l
+
+	echo "geoid r: cmean cstd"
+	echo $cmean $cstd
+
+	rltot=`awk '{print $0}' < rltot.temp`
+	echo "r_l:", $rltot
+
+	cmean=`echo $cmean | awk '{printf "%.2f\n", $1}'`
+	rltot=`echo $rltot | awk '{printf "%.2f\n", $1}'`
+
+
+	rgnp="-R0/$lmax/1e-7/1e0" 
+	projp="-JX5c/7cl"
+	bs="nS"
+	gmt psbasemap $rgnp $projp -Ba1f1p+l"Geoid Power (km@+2@+)" -BWe -K -O -Y-8c >> $psfile
+	gmt psbasemap $rgnp $projp -Ba20f5+l"Degree, @%6%l@%%" -B${bs} -O -K >> $psfile
+
+	awk '{print $1, $2/1e6}' l_power_ref_geo.temp | gmt psxy $rgnp $projp -W1p,grey -O -K >> $psfile
+	awk '{print $1, $2/1e6}' l_power.temp | gmt psxy $rgnp $projp -W1p,black -O -K >> $psfile
+	gmt psbasemap $rgnp $projp -Ba0 -O -K >> $psfile
+	echo "h" | gmt pstext $rgnp $projp -F+f24p+jTR+cTR -D-6p/-6p -Gwhite -O -K >> $psfile
+	
+	
+	# calculate total pspec misfit, chi_p
+	cat l_power.temp | awk '{print $1, $2/1e6}' >  f1
+	
+	#calc_pow_rms
+	cat l_power_ref_geo.temp | awk '{print $1, $2/1e6}' > f2
+
+	## geoid misfit
+	awk '{if ($1>1) print $0}' f1 > f1a
+	awk '{if ($1>1) print $0}' f2 > f2a
+	n=`wc -l f1a | awk '{print $1}'`
+	rmsg=`paste f1a f2a | awk '{print $2, $4}' | awk '{print ($1-$2)**2.}' | awk '{sum+=$1;}END{print sum;}' | awk -v n=$n '{print ($1/n)**0.5}'`
+	rmsglog=`paste f1a f2a | awk '{print log($2)/log(10), log($4)/log(10)}' | awk '{print ($1-$2)**2.}' | awk '{sum+=$1;}END{print sum;}' | awk -v n=$n '{print ($1/n)**0.5}'`
+	
+	rmsg=`echo $rmsg | awk '{printf "%.2f\n", $1}'`
+	rmsglog=`echo $rmsglog | awk '{printf "%.2f\n", $1}'`
+
+	echo "@[\chi_p@[ = $rmsglog" | gmt pstext $rgnp $projp -F+f14p+cTC+jTC -D0p/-4p -N -O -K >> $psfile
+	
+	echo "geoid: rmsg, rmsglog"
+	echo $rmsg $rmsglog
+	echo "=================================================="
+	
+# plot histogram...
+	t=25
+	minv="-300"
+	maxv="300"
+	
+	# reference
+	gmt grd2xyz $refgeogrd > xyz.temp
+	python my_histo_global_sph_adj.py $minv $maxv $t
+	mv myhisto.temp myhisto_refgeo.temp
+	
+	#calculated
+	rgnh="-R${minv}/${maxv}/0/10000"
+	projh="-JX5c/7c"
+	
+	gmt psbasemap $rgnh $projh -X6c -BwESn -Bx200f100+l"h, m"  -By5000+a90 -O -K >> $psfile
+
+	gmt grd2xyz $geoidgrd > xyz.temp
+	python my_histo_global_sph_adj.py $minv $maxv $t
+	
+	barsize="5p"
+	gmt psxy myhisto.temp $rgnh $projh -Sb${barsize}+b0 -Gblack -O -K >> $psfile
+	
+	barsize="2.5p"
+	gmt psxy myhisto_refgeo.temp $rgnh $projh -Sb${barsize}+b0 -Ggrey -O -K >> $psfile
+	
+	echo "i" | gmt pstext $rgnh $projh -F+f24p+jTL+cTL -D6p/-6p -Gwhite -O -K >> $psfile
+	echo "Count" | gmt pstext $rgnh $projh -F+f14p+jTR+cTR+a90 -D-15p/-6p -N -O -K >> $psfile
+	
+	rm -f tempbox
+	touch tempbox
+	echo -150 9000 >> tempbox
+	echo 150 9000 >> tempbox
+	echo 150 10000 >> tempbox
+	echo -150 10000 >> tempbox
+	echo -150 9000 >> tempbox
+ 	gmt psxy tempbox $rgnh $projh -Gwhite -t20 -K -O >> $psfile
+	echo "@[\chi@[ = $l2norm_factored m" | gmt pstext $rgnh $projh -F+f14p+cTC -D0p/-4p -N -O -K -Ba0 >> $psfile
+	
+# forte correlation coeff #
+
+#	lmax=`gmt gmtinfo -C temp2.coef.out | awk '{print $2}'` # NOTE, may not work if temp2.coef.out not just created. Set outside this fn?
+#	rgnc="-R0/$lmax/-0.5/1"
+	rgnc="-R0/$kno/-1.1/1.1"
+	projc="-JX5c/7c"
+
+	gmt psbasemap $rgnc $projc -X6c -Ba0.5f0.25+l"Correlation, @[r_l@[" -BE -O -K >> $psfile
+	gmt psbasemap $rgnc $projc -Ba20f5+l"Degree, @[l@[" -BSn -O -K >> $psfile
+
+	awk '{print (NR-1), $1}' corr1.temp | gmt psxy $rgnc $projc -W1p,black -O -K >> $psfile
+
+	gmt psbasemap $rgnc $projc -Ba0 -O -K >> $psfile
+	
+echo "j" | gmt pstext $rgnh $projh -F+f24p+jTR+cTR -D-6p/-6p -Gwhite -O -K >> $psfile
+echo "@[\overline{r_l}@[ = $cmean" | gmt pstext $rgnh $projh -F+f14p+cTC -D0p/-4p -N -O -K >> $psfile
+echo "@[{r}@[ = $rltot" | gmt pstext $rgnh $projh -F+f14p+cTC -D0p/-18p -N -O  >> $psfile
+
+
+ps2eps -f $psfile
+gmt psconvert ./mc2_${mc2name}_REFvREF_full_topo_geoid.eps
+
+rm $psfile
+open ./mc2_${mc2name}_REFvREF_full_topo_geoid.jpg
+
+done
+
+exit
+
